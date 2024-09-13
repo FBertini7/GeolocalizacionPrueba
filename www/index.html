@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="format-detection" content="telephone=no">
+        <meta name="msapplication-tap-highlight" content="no">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        <meta name="color-scheme" content="light dark">
+        <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests;">
+        <link rel="stylesheet" href="css/index.css">
+        <link rel="stylesheet" href="common/leaflet/dist/leaflet.css" />
+        <link rel="stylesheet" href="common/leaflet-routing-machine/dist/leaflet-routing-machine.css" />
+        <title>Geolocalizacion</title>
+    </head>
+    <body>
+        <button id="googleMaps" class="button">Google Maps</button>
+        <button id="leaflet" class="button">Leaflet</button>
+        <div id="map"></div>
+        <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAE0xSz507kOwXAhM6oE2_IvnRDRKwcgjM&parameters"></script>
+        <script src="common/leaflet/dist/leaflet.js"></script>
+        <script src="common/leaflet.offline/dist/bundle.js"></script>
+        <script src="common/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+        <script src="common/leaflet-routing-machine/dist/leaflet-routing-machine.min.js"></script>
+        <script src="cordova.js"></script>
+        <script src="js/index.js"></script>
+    </body>
+</html>
