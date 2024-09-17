@@ -1,14 +1,6 @@
 document.addEventListener('deviceready', async function() {
-
-}, false);
-
-document.getElementById('googleMaps').addEventListener('click', async () => {
-    await crearMapaGoogleMaps();
-});
-
-document.getElementById('leaflet').addEventListener('click', async () => {
     await crearMapaLeaflet(await verificarConexion());
-});
+}, false);
 
 // Google Maps API (requiere de conexión)
 async function crearMapaGoogleMaps() {
@@ -67,9 +59,8 @@ let gLeafletMap;
 async function crearMapaLeaflet(online = true) {
     const ubicacionActual = await obtenerUbicacionActual();
     if(online) {
-        gLeafletMap?.remove();
         gLeafletMap = crearMapaLeafletOnline(ubicacionActual.latitude, ubicacionActual.longitude);
-        calcularRutaLeaflet(gLeafletMap, ubicacionActual.latitude, ubicacionActual.longitude, -34.591707, -58.372316, [{lat: -34.598374, lng: -58.368144}]);
+        await downloadMapTiles(ubicacionActual.latitude, ubicacionActual.longitude);
     } else {
         crearMapaLeafletOffline(ubicacionActual.latitude, ubicacionActual.longitude);
     }
@@ -92,27 +83,147 @@ function crearMapaLeafletOnline(lat, lng) {
     return leafletMap;
 }
 
-function calcularRutaLeaflet(leafletMap, latOrigen, lngOrigen, latDestino, lngDestino, paradas = []) {
-    const origen = L.latLng(latOrigen, lngOrigen);
-    const stops = paradas.map(p => L.latLng(p.lat, p.lng));
-    const destino = L.latLng(latDestino, lngDestino);
-    L.Routing.control({
-        waypoints: [
-            origen,
-            ...stops,
-            destino
-        ]
-    }).addTo(leafletMap);
+async function downloadMapTiles(lat, lng) {
+    var url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+    // Definir un área para descargar alrededor de la ubicación actual
+    var tileRadius = 2; // Radio de tiles alrededor de la ubicación actual (ajustable)
+
+    for (var z = 13; z <= 16; z++) { // Niveles de zoom
+        var centerTile = latLngToTile(lat, lng, z);
+
+        // Definir los límites de x y y para descargar un área alrededor de la ubicación actual
+        var minX = Math.max(centerTile.x - tileRadius, 0);
+        var maxX = Math.min(centerTile.x + tileRadius, Math.pow(2, z) - 1);
+        var minY = Math.max(centerTile.y - tileRadius, 0);
+        var maxY = Math.min(centerTile.y + tileRadius, Math.pow(2, z) - 1);
+
+        for (var x = minX; x <= maxX; x++) {
+            for (var y = minY; y <= maxY; y++) {
+                var tileUrl = url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+                await downloadTile(tileUrl, z, x, y);
+            }
+        }
+    }
+}
+
+async function downloadTile(tileUrl, z, x, y) {
+    try {
+        const response = await fetch(tileUrl);
+        const blob = await response.blob();
+        await saveTileToIndexedDB(z, x, y, blob);
+    } catch (error) {
+        console.log("Error al descargar el tile: ", error);
+    }
+}
+
+async function saveTileToIndexedDB(z, x, y, blob) {
+    return new Promise((resolve, reject) => {
+        var request = indexedDB.open('tilesDB', 1);
+
+        request.onupgradeneeded = function (event) {
+            var db = event.target.result;
+            db.createObjectStore('tiles', { keyPath: 'id' });
+        };
+
+        request.onsuccess = function (event) {
+            var db = event.target.result;
+            var transaction = db.transaction('tiles', 'readwrite');
+            var objectStore = transaction.objectStore('tiles');
+
+            var tile = {
+                id: `${z}-${x}-${y}`,
+                blob: blob
+            };
+
+            var request = objectStore.put(tile);
+
+            request.onsuccess = function () {
+                resolve();
+            };
+
+            request.onerror = function (e) {
+                reject(e);
+            };
+        };
+
+        request.onerror = function (e) {
+            reject(e);
+        };
+    });
+}
+
+function latLngToTile(lat, lng, zoom) {
+    var tileX = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
+    var tileY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+    return { x: tileX, y: tileY };
 }
 
 function crearMapaLeafletOffline(lat, lng) {
+    gLeafletMap = L.map('map').setView([lat, lng], 14);
 
+    L.tileLayer('', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        noWrap: true,
+        bounds: [[-90, -180], [90, 180]],
+        tileLoadError: function (e) {
+            e.tile.src = 'img/error-tile.png'; // Tile de error si no se encuentra el tile
+        }
+    }).on('tileload', function (event) {
+        var tile = event.tile;
+        var coords = tile.coords;
+        loadTileFromIndexedDB(coords.z, coords.x, coords.y, function (dataURL) {
+            if (dataURL) {
+                tile.src = dataURL;
+            } else {
+                tile.src = 'img/error-tile.png'; // Tile de error en caso de que no se pueda cargar
+            }
+        });
+    }).addTo(gLeafletMap);
+
+    L.marker([lat, lng]).addTo(gLeafletMap)
+        .bindPopup('Usted está aquí')
+        .openPopup();
+}
+
+function loadTileFromIndexedDB(z, x, y, callback) {
+    var request = indexedDB.open('tilesDB', 1);
+
+    request.onsuccess = function (event) {
+        var db = event.target.result;
+        var transaction = db.transaction('tiles', 'readonly');
+        var objectStore = transaction.objectStore('tiles');
+
+        var request = objectStore.get(`${z}-${x}-${y}`);
+
+        request.onsuccess = function (event) {
+            var result = event.target.result;
+            if (result) {
+                var reader = new FileReader();
+                reader.onloadend = function () {
+                    var dataURL = reader.result;
+                    callback(dataURL);
+                };
+                reader.readAsDataURL(result.blob);
+            } else {
+                callback(null);
+            }
+        };
+
+        request.onerror = function (e) {
+            callback(null);
+        };
+    };
+
+    request.onerror = function (e) {
+        callback(null);
+    };
 }
 
 function obtenerUbicacionActual() {
     return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition((posicion) => {
-            console.log(posicion.coords);
             resolve(posicion.coords);
         }, (error) => {
             reject(error);

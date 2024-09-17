@@ -15,7 +15,9 @@
   "devDependencies": {
     "cordova-android": "^13.0.0",
     "cordova-browser": "^7.0.0",
-    "cordova-plugin-geolocation": "^5.0.0"
+    "cordova-plugin-file": "^8.1.0",
+    "cordova-plugin-geolocation": "^5.0.0",
+    "cordova-plugin-network-information": "^3.0.0"
   },
   "cordova": {
     "platforms": [
@@ -25,7 +27,11 @@
     "plugins": {
       "cordova-plugin-geolocation": {
         "GPS_REQUIRED": "true"
-      }
+      },
+      "cordova-plugin-file": {
+        "ANDROIDX_WEBKIT_VERSION": "1.4.0"
+      },
+      "cordova-plugin-network-information": {}
     }
   },
   "dependencies": {
