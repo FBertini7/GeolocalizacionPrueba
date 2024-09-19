@@ -1,4 +1,5 @@
 document.addEventListener('deviceready', async function() {
+    await inicializarBaseDeDatos();
     await crearMapaLeaflet(await verificarConexion());
 }, false);
 
@@ -55,6 +56,7 @@ function calcularRutaGoogleMaps(googleMap, latOrigen, lngOrigen, latDestino, lng
 
 // Librería Leaflet
 let gLeafletMap;
+let db;
 
 async function crearMapaLeaflet(online = true) {
     const ubicacionActual = await obtenerUbicacionActual();
@@ -118,39 +120,11 @@ async function downloadTile(tileUrl, z, x, y) {
 }
 
 async function saveTileToIndexedDB(z, x, y, blob) {
-    return new Promise((resolve, reject) => {
-        var request = indexedDB.open('tilesDB', 1);
-
-        request.onupgradeneeded = function (event) {
-            var db = event.target.result;
-            db.createObjectStore('tiles', { keyPath: 'id' });
-        };
-
-        request.onsuccess = function (event) {
-            var db = event.target.result;
-            var transaction = db.transaction('tiles', 'readwrite');
-            var objectStore = transaction.objectStore('tiles');
-
-            var tile = {
-                id: `${z}-${x}-${y}`,
-                blob: blob
-            };
-
-            var request = objectStore.put(tile);
-
-            request.onsuccess = function () {
-                resolve();
-            };
-
-            request.onerror = function (e) {
-                reject(e);
-            };
-        };
-
-        request.onerror = function (e) {
-            reject(e);
-        };
-    });
+    const tile = {
+        "id": `${z}-${x}-${y}`,
+        "blob": blob
+    };
+    guardarDatosEnDB(tile);
 }
 
 function latLngToTile(lat, lng, zoom) {
@@ -159,67 +133,70 @@ function latLngToTile(lat, lng, zoom) {
     return { x: tileX, y: tileY };
 }
 
-function crearMapaLeafletOffline(lat, lng) {
-    gLeafletMap = L.map('map').setView([lat, lng], 14);
-
-    L.tileLayer('', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        noWrap: true,
-        bounds: [[-90, -180], [90, 180]],
-        tileLoadError: function (e) {
-            e.tile.src = 'img/error-tile.png'; // Tile de error si no se encuentra el tile
-        }
-    }).on('tileload', function (event) {
-        var tile = event.tile;
-        var coords = tile.coords;
-        loadTileFromIndexedDB(coords.z, coords.x, coords.y, function (dataURL) {
-            if (dataURL) {
-                tile.src = dataURL;
+class OfflineTileLayer extends L.TileLayer {
+    async _getTileUrl(tilePoint) {
+        const z = this._getZoom();
+        const x = tilePoint.x;
+        const y = tilePoint.y;
+        return loadTileFromIndexedDB(z, x, y).then(url => {
+            if (url) {
+                return url;
             } else {
-                tile.src = 'img/error-tile.png'; // Tile de error en caso de que no se pueda cargar
+                return this._url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
             }
+        }).catch(error => {
+            console.error("Error al obtener el tile: ", error);
+            return null;
         });
-    }).addTo(gLeafletMap);
+    }
+}
+
+async function crearMapaLeafletOffline(lat, lng) {
+    gLeafletMap = L.map('map').setView([lat, lng], 14);
+    const offlineTileLayer = new OfflineTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        minZoom: 13,
+        maxZoom: 16
+    });
+    gLeafletMap.addLayer(offlineTileLayer);
 
     L.marker([lat, lng]).addTo(gLeafletMap)
         .bindPopup('Usted está aquí')
         .openPopup();
 }
 
-function loadTileFromIndexedDB(z, x, y, callback) {
-    var request = indexedDB.open('tilesDB', 1);
-
-    request.onsuccess = function (event) {
-        var db = event.target.result;
-        var transaction = db.transaction('tiles', 'readonly');
-        var objectStore = transaction.objectStore('tiles');
-
-        var request = objectStore.get(`${z}-${x}-${y}`);
-
-        request.onsuccess = function (event) {
-            var result = event.target.result;
-            if (result) {
-                var reader = new FileReader();
-                reader.onloadend = function () {
-                    var dataURL = reader.result;
-                    callback(dataURL);
-                };
-                reader.readAsDataURL(result.blob);
-            } else {
-                callback(null);
-            }
-        };
-
-        request.onerror = function (e) {
-            callback(null);
-        };
-    };
-
-    request.onerror = function (e) {
-        callback(null);
-    };
+function loadTileFromIndexedDB(z, x, y,) {
+    return new Promise(async (resolve, reject) => {
+        const tileData = await db.tiles.get(`${z}-${x}-${y}`);
+        if (tileData) {
+            const blob = tileData.blob;
+            resolve(blob);
+            const reader = new FileReader();
+            reader.onloadend = function () {
+                resolve(reader.result);
+            };
+            reader.readAsDataURL(blob);
+        } else {
+            reject('LOL');
+        }
+    });
 }
+
+async function inicializarBaseDeDatos() {
+    try {
+        db = new Dexie('tilesDB');
+        db.version(1).stores({
+            tiles: 'id,blob'
+        });
+        await db.open();
+        console.log("Base de datos cargada correctamente.");
+    } catch (error) {
+        console.error("Error al cargar la base de datos:", error);
+    }
+}
+
+function guardarDatosEnDB(datos) {
+    db.tiles.put(datos);
+};
 
 function obtenerUbicacionActual() {
     return new Promise((resolve, reject) => {
