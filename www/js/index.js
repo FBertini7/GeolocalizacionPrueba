@@ -62,6 +62,7 @@ async function crearMapaLeaflet(online = true) {
     const ubicacionActual = await obtenerUbicacionActual();
     if(online) {
         gLeafletMap = crearMapaLeafletOnline(ubicacionActual.latitude, ubicacionActual.longitude);
+        await db.tiles?.clear();
         await downloadMapTiles(ubicacionActual.latitude, ubicacionActual.longitude);
     } else {
         crearMapaLeafletOffline(ubicacionActual.latitude, ubicacionActual.longitude);
@@ -134,20 +135,40 @@ function latLngToTile(lat, lng, zoom) {
 }
 
 class OfflineTileLayer extends L.TileLayer {
-    async _getTileUrl(tilePoint) {
-        const z = this._getZoom();
-        const x = tilePoint.x;
-        const y = tilePoint.y;
-        return loadTileFromIndexedDB(z, x, y).then(url => {
-            if (url) {
-                return url;
-            } else {
-                return this._url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
-            }
-        }).catch(error => {
-            console.error("Error al obtener el tile: ", error);
-            return null;
+   createTile(coords, done) {
+        var tile = document.createElement('img');
+
+		tile.addEventListener('load', () => this._tileOnLoad(done, tile));
+		tile.addEventListener('error', () => this._tileOnError(done, tile));
+
+		if (this.options.crossOrigin || this.options.crossOrigin === '') {
+			tile.crossOrigin = this.options.crossOrigin === true ? '' : this.options.crossOrigin;
+		}
+
+		if (typeof this.options.referrerPolicy === 'string') {
+			tile.referrerPolicy = this.options.referrerPolicy;
+		}
+
+		tile.alt = '';
+
+		loadTileFromIndexedDB(coords.z, coords.x, coords.y).then(url => {
+            tile.src = url;
         });
+
+		return tile;
+   }
+}
+
+async function loadTileFromIndexedDB(z, x, y) {
+    try {
+        const tileData = await db.tiles.get(`${z}-${x}-${y}`);
+        if (tileData) {
+            return URL.createObjectURL(tileData.blob);
+        } else {
+            throw new Error('No se encontró el tile.');
+        }
+    } catch(error) {
+        console.error('Error al cargar tile desde DB: ', error);
     }
 }
 
@@ -155,30 +176,13 @@ async function crearMapaLeafletOffline(lat, lng) {
     gLeafletMap = L.map('map').setView([lat, lng], 14);
     const offlineTileLayer = new OfflineTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         minZoom: 13,
-        maxZoom: 16
+        maxZoom: 16,
     });
     gLeafletMap.addLayer(offlineTileLayer);
 
     L.marker([lat, lng]).addTo(gLeafletMap)
         .bindPopup('Usted está aquí')
         .openPopup();
-}
-
-function loadTileFromIndexedDB(z, x, y,) {
-    return new Promise(async (resolve, reject) => {
-        const tileData = await db.tiles.get(`${z}-${x}-${y}`);
-        if (tileData) {
-            const blob = tileData.blob;
-            resolve(blob);
-            const reader = new FileReader();
-            reader.onloadend = function () {
-                resolve(reader.result);
-            };
-            reader.readAsDataURL(blob);
-        } else {
-            reject('LOL');
-        }
-    });
 }
 
 async function inicializarBaseDeDatos() {
