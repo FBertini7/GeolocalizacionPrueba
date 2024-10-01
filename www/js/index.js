@@ -12,6 +12,11 @@ document.addEventListener('deviceready', async function() {
     await crearMapa(await verificarConexion());
 }, false);
 
+document.getElementById('ruta').addEventListener('click', async function () {
+    const ubicacionActual = await obtenerUbicacionActual();
+    calcularRutaOptima(ubicacionActual.latitude, ubicacionActual.longitude, -34.591707, -58.372316, [{lat: -34.598374, lng: -58.368144}])
+})
+
 async function crearMapa(online) {
     const ubicacionActual = await obtenerUbicacionActual();
     if(online) {
@@ -119,7 +124,6 @@ function calcularDistancia(latOrigen, lngOrigen, latDestino, lngDestino) {
     return distancia;
 }
 
-
 class customTileLayer extends L.TileLayer {
    createTile(coords, done) {
         var tile = document.createElement('img');
@@ -149,6 +153,71 @@ class customTileLayer extends L.TileLayer {
 
 		return tile;
    }
+}
+
+L.Routing.CustomRouter = L.Class.extend({
+    initialize: function(options) {
+        this.options = options || {};
+        this.routerOnline = L.Routing.osrmv1({
+            serviceUrl: 'https://router.project-osrm.org/route/v1'
+        });
+    },
+
+    route: async function(waypoints, callback, context, options) {
+        if (await verificarConexion()) {
+            this.routerOnline.route(waypoints, async (err, rutas) => {
+                if (!err) {
+                    guardarRuta(rutas[0]);
+                    callback.call(context, null, rutas);
+                } else {
+                    console.error('Error al obtener ruta en línea:', err);
+                }
+            }, options);
+        } else {
+            const ultimaRuta = cargarRuta();
+            if (ultimaRuta) {
+                const ruta = {
+                    ...ultimaRuta,
+                    coordinates: ultimaRuta.coordinates.map(coord => L.latLng(coord.lat, coord.lng)),
+                    inputWaypoints: ultimaRuta.inputWaypoints.map(iWp => ({
+                        options: iWp.options,
+                        latLng: L.latLng(iWp.latLng.lat, iWp.latLng.lng)
+                    })),
+                    waypoints: ultimaRuta.waypoints.map(wp => ({
+                        options: wp.options,
+                        latLng: L.latLng(wp.latLng.lat, wp.latLng.lng)
+                    }))
+                }
+                callback.call(context, null, [ruta]);
+            } else {
+                callback.call(context, new Error('No hay rutas almacenadas disponibles.'), null);
+            }
+        }
+    }
+});
+
+async function calcularRutaOptima(latOrigen, lngOrigen, latDestino, lngDestino, paradas = []) {
+    const origen = L.latLng(latOrigen, lngOrigen);
+    const stops = paradas.map(p => L.latLng(p.lat, p.lng));
+    const destino = L.latLng(latDestino, lngDestino);
+    L.Routing.control({
+        router: new L.Routing.CustomRouter(),
+        waypoints: [
+            origen,
+            ...stops,
+            destino
+        ]
+    }).addTo(gLeafletMap);
+}
+
+function guardarRuta(ruta) {
+    localStorage.setItem('ultimaRuta', JSON.stringify(ruta));
+}
+
+function cargarRuta() {
+    const data = localStorage.getItem('ultimaRuta');
+    if (data) return JSON.parse(data);
+    else return null;
 }
 
 function obtenerUbicacionActual() {
